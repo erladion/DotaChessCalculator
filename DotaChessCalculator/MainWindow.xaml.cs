@@ -8,7 +8,6 @@ using System.Text.RegularExpressions;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using HelperFunctions;
-using OpenCvSharp;
 
 namespace DotaChessCalculator
 {
@@ -212,81 +211,75 @@ namespace DotaChessCalculator
 			}
 		}
 
-		private void Screenshot_Button_Click(object sender, RoutedEventArgs e)
+		private void UpdateComboBoxes(List<string> comboBoxInfo)
 		{
-			string desktopPath = Environment.GetFolderPath(Environment.SpecialFolder.Desktop);
-			int contrast = 80;
-
-			Bitmap bm = ImageUtility.CaptureScreen();
-			bm = (Bitmap)ImageUtility.IncreaseContrast(bm, contrast);
-			ImageUtility.Grayscale(bm);
-
-			// ExtractRanks currently only works with 1080p resolutions
-			List<Bitmap> rankList = ImageUtility.ExtractRanks(bm);
-
-			List<string> ranks = new List<string>();
-			for (int i = 0; i < rankList.Count; i++)
-			{
-				Bitmap currentBitmap = rankList[i];
-
-				// According to https://groups.google.com/forum/#!msg/tesseract-ocr/Wdh_JJwnw94/24JHDYQbBQAJ
-				// the ideal pixel height of letters are to be around 30-33
-				// our original bitmaps are of height 25 and each letter with a height of around 12-13 pixels so we simply increase the image size by 2.
-				// So our new bitmaps should be 50 pixels high, 130 pixels wide and have letters at around 24-26 pixels in height
-				// Before upscaling we had about 60-75% accuracy which meant some of the letters/numbers would be totally wrong, but after upscaling we got
-				// about 90%
-				currentBitmap = (Bitmap)ImageUtility.Resize(currentBitmap, currentBitmap.Width * 2, currentBitmap.Height * 2, false);
-				currentBitmap.Save(desktopPath + $@"\dotachessranks{i}.png");
-
-				engine.SetVariable("tessedit_char_blacklist", "é");
-
-				using (Tesseract.Page page = engine.Process(currentBitmap))
-				{
-					string text = page.GetText();
-					text = RemoveUnwantedChars(text);
-					text = text.ToLower();
-
-					Debug.WriteLine(text);
-					InformationBlock.Text += text;
-
-					Match m = Regex.Match(text, @"([a-z]+[0-9])");					
-					ranks.Add(m.Value);
-
-					Match mt = Regex.Match(text, @"unranked");
-					if (mt.Success)
-					{
-						ranks.Add(mt.Value);
-					}
-				}
-			}
-
 			int counter = 0;
 			foreach (var item in ComboBoxGrid.Children)
 			{
 				foreach (var it in ((ComboBox)item).Items)
 				{
-					if (it.ToString() == ranks[counter])
+					if (counter < comboBoxInfo.Count && it.ToString() == comboBoxInfo[counter])
 					{
 						((ComboBox)item).SelectedItem = it;
 						counter++;
 						break;
 					}
-				}				
+				}
 			}
 		}
 
-		private string RemoveUnwantedChars(string s)
+		private string ProcessBitmap(Bitmap bm)
 		{
-			string text = s.Replace(" ", "");
-			// Regular -
-			text = text.Replace("-", "");
-			// EN DASH
-			text = text.Replace("–", "");
-			// EM DASH
-			text = text.Replace("—", "");
+			int contrast = 10;
+			while (contrast <= 100)
+			{
+				Bitmap b = bm;
 
-			return text;
+				b = (Bitmap)ImageUtility.IncreaseContrast(b, contrast);
+				// TODO: Create a replacement for these 2 functions.
+				ImageUtility.MakeGrayscale(b);
+				ImageUtility.InverseGrayscale(b);
+				// Increase size of the images so that the text have a increased pixel size for better accuracy.
+				// According to https://groups.google.com/forum/#!msg/tesseract-ocr/Wdh_JJwnw94/24JHDYQbBQAJ
+				// the ideal pixel height of letters are to be around 30-33.
+				b = (Bitmap)ImageUtility.Resize(b, bm.Width * 2, bm.Height * 2, false);
+
+				using (Tesseract.Page page = engine.Process(b))
+				{
+					string text = page.GetText();
+					text = text.ToLower();
+					// TODO: Fix this regex so it does not have to match with exactly bishop or knight etc, but instead just a general one.
+					Match t = Regex.Match(text, @"(((bishop)|(knight)|(rook)|(pawn))[-–—][0-9])");
+					Debug.WriteLine(text);
+					if (t.Success)
+					{
+						Debug.WriteLine(t.Value);
+						return t.Value; 
+					}
+					contrast += 10;
+				}
+			}
+			return "";
 		}
+
+		private void Screenshot_Button_Click(object sender, RoutedEventArgs e)
+		{
+			string desktopPath = Environment.GetFolderPath(Environment.SpecialFolder.Desktop);
+			
+			Bitmap bm = ImageUtility.CaptureScreen();
+			List<Bitmap> rankList = ImageUtility.ExtractRanks(bm);
+
+			List<string> ranks = new List<string>();
+			for (int i = 0; i < rankList.Count; i++)
+			{
+				ranks.Add(RemoveUnwantedChars(ProcessBitmap(rankList[i])));
+			}
+
+			UpdateComboBoxes(ranks);
+		}
+
+		// Removes Space, Regular -, EN DASH, EM DASH
+		private string RemoveUnwantedChars(string s) => s.Replace(" ", "").Replace("-", "").Replace("–", "").Replace("—", "");
 
 		//
 		// Hooked to every combobox, so we get dynamic updates of the avg mmr

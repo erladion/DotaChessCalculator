@@ -207,8 +207,8 @@ namespace HelperFunctions
 		}
 
 		public static double Luminosity(int R, int G, int B) => (0.2126 * R + 0.7152 * G + 0.0722 * B);
-
 		public static double Average(int R, int G, int B) => (R + G + B) / 3;
+		public static int InverseColor(int c) => (255 - c);
 
 		/// <summary>
 		/// Makes an image grayscale pixel by pixel
@@ -258,6 +258,37 @@ namespace HelperFunctions
 						line[x] = (byte)gray;
 						line[x + 1] = (byte)gray;
 						line[x + 2] = (byte)gray;
+					}
+				});
+				bm.UnlockBits(bmd);
+			}
+		}
+
+		public static void InverseGrayscale(Bitmap bm)
+		{
+			unsafe
+			{
+				BitmapData bmd = bm.LockBits(new Rectangle(0, 0, bm.Width, bm.Height), ImageLockMode.ReadWrite, bm.PixelFormat);
+
+				int bytesPerPixel = Image.GetPixelFormatSize(bm.PixelFormat) / 8;
+				int height = bmd.Height;
+				int widthInBytes = bmd.Width * bytesPerPixel;
+
+				byte* ptr = (byte*)bmd.Scan0;
+
+				Parallel.For(0, height, y =>
+				{
+					byte* line = ptr + (y * bmd.Stride);
+
+					for (int x = 0; x < widthInBytes; x = x + bytesPerPixel)
+					{
+						int gray = line[x];
+
+						int inverseGray = InverseColor(gray);
+
+						line[x] = (byte)inverseGray;
+						line[x + 1] = (byte)inverseGray;
+						line[x + 2] = (byte)inverseGray;
 					}
 				});
 				bm.UnlockBits(bmd);
