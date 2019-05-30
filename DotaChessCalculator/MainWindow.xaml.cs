@@ -107,6 +107,8 @@ namespace DotaChessCalculator
 			{
 				CurrentRank.Items.Add(item);
 			}
+
+			engine.SetVariable("tessedit_char_blacklist", "zZ");
 		}
 
 #if DEBUG
@@ -115,25 +117,29 @@ namespace DotaChessCalculator
 		static extern bool AllocConsole();
 #endif
 
-		private double CalculateAvgMMR(UIElementCollection collection)
+		private double CalculateAvgMMR(List<string> ranks)
 		{
 			int numberOfUnranked = 0;
 			int total = 0;
-			foreach (var control in collection)
+			foreach (var rank in ranks)
 			{
-				if (((ComboBox)control).SelectedValue.ToString() == "unranked")
+				if (rank == "unranked")
 				{
 					numberOfUnranked++;
 					continue;
 				}
-				total += (int)Enum.Parse(typeof(Rank), ((ComboBox)control).SelectedValue.ToString());
-			}
+				total += (int)Enum.Parse(typeof(Rank), rank);
+			}		
 
-			double avgMMR = total / (8 - numberOfUnranked);
+			return total / (8 - numberOfUnranked);
+		}
 
-			double closestRankValue = Math.Ceiling(avgMMR / 80) * 80;
-			double diff = int.MaxValue;
+		private string ClosestRank(double mmr)
+		{
 			string closestRank = "";
+			double closestRankValue = Math.Ceiling(mmr / 80) * 80;
+			double diff = int.MaxValue;
+
 			foreach (var item in Enum.GetValues(typeof(Rank)))
 			{
 				double currentDiff = Math.Abs((int)Enum.Parse(typeof(Rank), item.ToString()) - closestRankValue);
@@ -144,9 +150,7 @@ namespace DotaChessCalculator
 				}
 			}
 
-			InformationBlock.Text += $"Approximated avg mmr in this game: {avgMMR} ({closestRank})\n";
-
-			return avgMMR;
+			return closestRank;
 		}
 
 		private double CalculateMMRChange(double avg, double current, int placement)
@@ -169,15 +173,24 @@ namespace DotaChessCalculator
 		private void CalculateButton_Click(object sender, RoutedEventArgs e)
 		{
 			InformationBlock.Text = "";
-			double avgMMR = CalculateAvgMMR(ComboBoxGrid.Children);
+
+			List<string> selectedRanks = new List<string>();
+			foreach (var control in ComboBoxGrid.Children)
+			{
+				selectedRanks.Add(((ComboBox)control).SelectedValue.ToString());
+			}
+
+			double avgMMR  = CalculateAvgMMR(selectedRanks);
+			string closestRank = ClosestRank(avgMMR);
+
+			InformationBlock.Text += $"Approximated avg mmr in this game: {avgMMR} ({closestRank})\n";
+
 			double currentMMR = (int)Enum.Parse(typeof(Rank), ((ComboBox)CurrentRank).SelectedValue.ToString());
-			int placement = 0;
-			double mmrChange = CalculateMMRChange(avgMMR, currentMMR, placement);
 
 			List<Tuple<double, int>> l = new List<Tuple<double, int>>();
 			foreach (var item in Enum.GetValues(typeof(Placement)))
 			{
-				mmrChange = CalculateMMRChange(avgMMR, currentMMR, (int)Enum.Parse(typeof(Placement), item.ToString()));
+				double mmrChange = CalculateMMRChange(avgMMR, currentMMR, (int)Enum.Parse(typeof(Placement), item.ToString()));
 
 				int s = (int)Enum.Parse(typeof(PlacementToNumber), item.ToString());
 
@@ -231,6 +244,7 @@ namespace DotaChessCalculator
 		private string ProcessBitmap(Bitmap bm)
 		{
 			int contrast = 10;
+			bool blackAndWhite = false;
 			while (contrast <= 100)
 			{
 				Bitmap b = bm;
@@ -239,6 +253,12 @@ namespace DotaChessCalculator
 				// TODO: Create a replacement for these 2 functions.
 				ImageUtility.MakeGrayscale(b);
 				ImageUtility.InverseGrayscale(b);
+
+				if (blackAndWhite)
+				{
+					ImageUtility.InverseGrayscale(b);
+				}
+
 				// Increase size of the images so that the text have a increased pixel size for better accuracy.
 				// According to https://groups.google.com/forum/#!msg/tesseract-ocr/Wdh_JJwnw94/24JHDYQbBQAJ
 				// the ideal pixel height of letters are to be around 30-33.
@@ -249,14 +269,36 @@ namespace DotaChessCalculator
 					string text = page.GetText();
 					text = text.ToLower();
 					// TODO: Fix this regex so it does not have to match with exactly bishop or knight etc, but instead just a general one.
-					Match t = Regex.Match(text, @"(((bishop)|(knight)|(rook)|(pawn))[-–—][0-9])");
+					Match t = Regex.Match(text, @"((((bishop)|(knight)|(rook)|(pawn))[-–—][0-9]))|(unranked)");
 					Debug.WriteLine(text);
 					if (t.Success)
 					{
 						Debug.WriteLine(t.Value);
 						return t.Value; 
 					}
-					contrast += 10;
+					if (!t.Success)
+					{
+						// Check for common "mistakes"
+						// OCR seeing s instead of 5 and z instead of 2
+						Match tt = Regex.Match(text, @"((((bishop)|(knight)|(rook)|(pawn))[-–—][sz]))");
+
+						if (tt.Success)
+						{
+							if (tt.Value.EndsWith("s"))
+							{
+								return (tt.Value.Remove(tt.Value.Length - 1, 1) + "5");
+							}
+							else if (tt.Value.EndsWith("z"))
+							{
+								return (tt.Value.Remove(tt.Value.Length - 1, 1) + "2");
+							}
+						}
+					}
+					if (blackAndWhite)
+					{											
+						contrast += 10;
+					}
+					blackAndWhite = blackAndWhite ^ true;
 				}
 			}
 			return "";
@@ -267,6 +309,7 @@ namespace DotaChessCalculator
 			string desktopPath = Environment.GetFolderPath(Environment.SpecialFolder.Desktop);
 			
 			Bitmap bm = ImageUtility.CaptureScreen();
+			bm.Save(desktopPath + $@"\{DateTime.Now.Month}{DateTime.Now.Day}{DateTime.Now.Hour}{DateTime.Now.Minute}.png");
 			List<Bitmap> rankList = ImageUtility.ExtractRanks(bm);
 
 			List<string> ranks = new List<string>();
